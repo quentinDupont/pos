@@ -20,7 +20,7 @@
         "views/view_account_journal.xml",
         "views/view_pos_config.xml",
         "views/view_pos_session.xml",
-        "wizard/wizard_pos_update_statement_balance.xml"
+        "wizard/wizard_pos_update_statement_balance.xml",
     ],
     'demo': [
         'demo/res_groups.xml',

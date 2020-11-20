@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+
+     <record id="view_wizard_pos_update_bank_statement_helper_form" model="ir.ui.view">
+        <field name="model">wizard.pos.update.bank.statement.helper</field>
+        <field name="arch" type="xml">
+            <form string="Calculate Balance">
+                <field name="item_ids" nolabel="1">
+                    <tree string="Statements" editable="top">
+                        <field name="coin_value" widget="numeric_step" options="{'step': 0.05, 'min': 0, 'max': 100}"/>
+                        <field name="number" widget="numeric_step" options="{'step': 1, 'min': 0}"/>
+                        <field name="subtotal"/>
+                    </tree>
+                </field>
+                <field string="Total" name="total"/>
+                <footer>
+                    <button name="action_confirm_helper" string="Apply" type="object" class="btn-primary"/>
+                    <button class="btn-secondary" special="cancel" string="Cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_wizard_pos_update_bank_statement_helper" model="ir.actions.act_window">
+        <field name="name">Calculate Balances</field>
+        <field name="type">ir.actions.act_window</field>
+        <field name="res_model">wizard.pos.update.bank.statement.helper</field>
+        <field name="view_type">form</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
+</odoo>
+

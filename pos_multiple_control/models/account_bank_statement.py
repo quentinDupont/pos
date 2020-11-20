@@ -37,6 +37,17 @@ class AccountBankStatement(models.Model):
         string="Display autosolve", compute="_compute_display_autosolve"
     )
 
+    INUTILE_cashbox_lines = fields.Many2one(
+        comodel_name="account.cashbox.line",
+        inverse_name='accountbs_id',
+        string="Cashbox",
+    )
+
+    cashbox = fields.Many2one(
+        comodel_name="account.bank.statement.cashbox",
+        string="Cashbox",
+    )
+
     # Compute Section
     @api.multi
     @api.depends("line_ids")
@@ -137,9 +148,11 @@ class AccountBankStatement(models.Model):
     def open_cashbox_balance(self, balance_moment):
         action = self.env.ref(
             "pos_multiple_control."
-            "action_wizard_pos_update_bank_statement_balance").read()[0]
+            "action_wizard_update_bank_statement").read()[0]
+        # import pdb; pdb.set_trace()
         action['context'] = {'balance_moment': balance_moment,
+                             'balance_end_real_up': 0,
                              'active_id': [self.id],
                              'active_pos_id': [self.pos_session_id.id],
-                             'active_model': 'pos.session'}
+                             'active_model': 'pos.session',}
         return action
