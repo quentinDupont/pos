@@ -11,59 +11,93 @@ class WizardUpdateBankStatement(models.TransientModel):
     def _default_session_id(self):
         return self.env.context.get('active_pos_id', False)
 
-# NOUVEAU
-# FIN NOUVEAU
+    statement_id = fields.Many2one(
+        comodel_name='account.bank.statement',
+    )
+    name = fields.Char(
+        related='statement_id.name'
+    )
+    journal_id = fields.Many2one(
+        comodel_name='account.journal',
+        related='statement_id.journal_id',
+    )
+    balance_start = fields.Monetary(
+        string="Starting Balance",
+        default=0.0,
+        compute='_compute_balance_start'
+    )
+    balance_start_real = fields.Monetary(
+        string="Real Start Balance",
+        default=0.0,
+        compute='_compute_balance_start_real',
+    )
+    total_entry_encoding = fields.Monetary(
+        related='statement_id.total_entry_encoding',
+    )
+    balance_end = fields.Monetary(
+        string="Computed Balance",
+        default=0.0,
+        compute='_compute_balance_end'
+    )
+    balance_end_real = fields.Monetary(
+        string="Real End Balance",
+        default=0.0,
+        compute='_compute_balance_end_real',
+    )
+    currency_id = fields.Many2one(
+        comodel_name='res.currency',
+        related='statement_id.currency_id'
+    )
+
     _BALANCE_MOMENT_SELECTION = [
         ('bydefault', 'Default'),
         ('starting', 'Starting balance'),
         ('ending', 'Ending balance'),
     ]
 
-    item_ids = fields.One2many(
-        comodel_name="wizard.update.bank.statement.line",
-        inverse_name="wiz_id",
-        string="Items",
-    )
-
     balance_moment = fields.Selection(
         selection=_BALANCE_MOMENT_SELECTION, string='Balance moment',
         default='bydefault')
-
-    journal_id = fields.Many2one(
-        comodel_name='account.journal', string="Journal",
-        domain="[('id', 'in', journal_ids)]", required=True)
 
     session_id = fields.Many2one(
         comodel_name='pos.session', string="Current Session",
         default=_default_session_id, required=True, readonly=True)
 
-    currency_id = fields.Many2one(
-        comodel_name='res.currency',
-        related='journal_id.currency_id'
-    )
+    def _compute_balance_start(self):
+        for rec in self:
+            rec.balance_start = rec.statement_id.balance_start
+
+    def _compute_balance_end(self):
+        for rec in self:
+            rec.balance_end = rec.statement_id.balance_end
 
     @api.multi
     @api.depends('cashbox_lines.subtotal')
-    def _compute_balance_end_real_up(self):
-        print("========= _compute_balance_end_real_up")
-        balance_end_real_up = 0.0
+    def _compute_balance_end_real(self):
+        balance_end_real = 0.0
         for cashbox_lines in self.cashbox_lines:
-            balance_end_real_up += cashbox_lines.subtotal
-        print("========= _compute_balance_end_real_up ; return : " + str(balance_end_real_up))
-        self.balance_end_real_up = balance_end_real_up
+            if cashbox_lines.balance_moment == 'ending':
+                balance_end_real += cashbox_lines.subtotal
+        self.balance_end_real = balance_end_real
         # Write in context for xml readonly field
         context = self.env.context.copy()
-        context.update({'balance_end_real_up': balance_end_real_up})
+        context.update({'balance_end_real': balance_end_real})
         self.env.context = context
-        # import pdb; pdb.set_trace()
-        # self.env.context.update({'balance_end_real_up': balance_end_real_up})
-        # return balance_end_real_up
-        return balance_end_real_up
+        return balance_end_real
 
-
-    balance_end_real_up = fields.Monetary(
-        compute='_compute_balance_end_real_up',
-    )
+    @api.multi
+    @api.depends('cashbox_lines.subtotal')
+    def _compute_balance_start_real(self):
+        balance_start_real = 0.0
+        for cashbox_lines in self.cashbox_lines:
+            if cashbox_lines.balance_moment == 'starting':
+                balance_start_real += cashbox_lines.subtotal
+        self.balance_start_real = balance_start_real
+        # Write in context for xml readonly field
+        context = self.env.context.copy()
+        context.update({'balance_start_real': balance_start_real})
+        self.env.context = context
+        return balance_start_real
 
     @api.model
     def _prepare_item(self, statement):
@@ -100,48 +134,44 @@ class WizardUpdateBankStatement(models.TransientModel):
         # Add bank statement lines
         session = session_obj.browse(active_pos_id[0])
         bank_statement = bank_statement_obj.browse(active_ids[0])
-        items = []
-        items.append([0, 0, self._prepare_item(bank_statement)])
-        # cashbox_lines = cashbox_lines_obj.search(['accountbs_id', '=', active_ids[0]])
         # Give values for wizard
         res["session_id"] = session.id
-        res["item_ids"] = items
+        res["statement_id"] = bank_statement.id
+        res["name"] = bank_statement.name
+        res["balance_start"] = bank_statement.balance_start
+        res["balance_end"] = bank_statement.balance_end
         res["balance_moment"] = balance_moment
+        res["total_entry_encoding"] = bank_statement.total_entry_encoding
+        res["currency_id"] = bank_statement.currency_id.id
         res["journal_id"] = bank_statement.journal_id.id
-        res["cashbox_lines"] = self._default_cashbox_lines()
+        res["cashbox_lines"] = self._get_cashbox_lines(balance_moment)
         return res
 
-
     @api.model
-    def _prepare_cashbox_lines(self, line):
+    def _prepare_cashbox_lines(self, line, moment):
         return {
             "coin_value": line.coin_value,
             "number": line.number,
             "subtotal": line.subtotal,
+            "balance_moment": line.balance_moment,
         }
 
     @api.model
     def _default_cashbox_lines(self):
-        # import pdb; pdb.set_trace()
+        self._get_cashbox_lines('bydefault')
+
+    @api.model
+    def _get_cashbox_lines(self, moment):
         # Load objects
-        # session_obj = self.env["pos.session"]
         bank_statement_obj = self.env["account.bank.statement"]
         # Load context
         active_ids = self.env.context["active_id"] or []
-        # active_pos_id = self.env.context["active_pos_id"] or []
-        # active_model = self.env.context["active_model"] or []
-        # balance_moment = self.env.context["balance_moment"] or []
-        # Add bank statement lines
-        # session = session_obj.browse(active_pos_id[0])
         bank_statement = bank_statement_obj.browse(active_ids[0])
         items = []
         for line in bank_statement.cashbox.cashbox_lines_ids:
-            items.append([0, 0, self._prepare_cashbox_lines(line)])
+            if line.balance_moment == moment:
+                items.append([0, 0, self._prepare_cashbox_lines(line, moment)])
         return items
-
-    # cashbox_lines = fields.One2many(
-    #     comodel_name='wizard.update.cashbox.line',
-    #     default=_default_cashbox_lines,)
 
     cashbox_lines = fields.One2many(
         comodel_name='wizard.update.cashbox.line',
@@ -156,102 +186,44 @@ class WizardUpdateBankStatement(models.TransientModel):
             "journal_id": item.journal_id.id,
         }
 
+    # cashbox_lines = {'coin_value': coin_value,
+    #                  'number': number,
+    #                  'subtotal': subtotal,
+    #                  'balance_moment': balance_moment}
+    def _create_cashbox(self, cashbox_lines, balance_moment):
+        # Load objects
+        cashbox_obj = self.env["account.bank.statement.cashbox"]
+        cashbox_line_obj = self.env["account.cashbox.line"]
+        bank_statement_obj = self.env["account.bank.statement"]
+        # Create the account.bank.statement.cashbox
+        cashbox = cashbox_obj.create({})
+        # Add the account.cashbox.line
+        for line in self.cashbox_lines:
+            cashbox_line_obj.create({
+                'coin_value': line['coin_value'],
+                'number': line['number'],
+                'subtotal': line['subtotal'],
+                'balance_moment': balance_moment,
+                'cashbox_id': cashbox.id,})
+        return cashbox
+
     @api.multi
     def action_confirm(self):
         self.ensure_one()
         # record new values from wizard
-        for item in self.item_ids:
-            if item.balance_moment == 'starting':
-                item.statement_id.balance_start = item.balance_start_real
-            elif item.balance_moment == 'ending':
-                if self.balance_end_real_up !=0:
-                    print("==== BALANCE END nouveau")
-                    item.statement_id.balance_end_real = self.balance_end_real_up
-                    # Load object
-                    cashbox_obj = self.env["account.bank.statement.cashbox"]
-                    cashbox_line_obj = self.env["account.cashbox.line"]
-                    bank_statement_obj = self.env["account.bank.statement"]
-                    # Load context
-                    active_ids = self.env.context["active_id"] or []
-                    bank_statement = bank_statement_obj.browse(active_ids[0])
-
-                    # Create the WizardUpdateCashboxLine
-                    _cashbox = cashbox_obj.create({})
-                    for line in self.cashbox_lines:
-                        cashbox_line_obj.create({
-                            'coin_value': line.coin_value,
-                            'number': line.number,
-                            'subtotal': line.subtotal,
-                            'cashbox_id': _cashbox.id,})
-                    # Save the WizardUpdateCashboxLine in bank_statement
-                    bank_statement.write({'cashbox' : _cashbox.id,})
-                    # item.cashbox = _cashbox
-                    # import pdb; pdb.set_trace()
-                    print("==== BALANCE END nouveau - On crée le cashbox qui sera saved, id")
-                    print("==== Cashbox, id : " + str(_cashbox.id))
-                    print("==== bank_statement, id : " + str(bank_statement.id))
-
-                else:
-                    print("==== BALANCE END ancien")
-                    item.statement_id.balance_end_real = item.balance_end_real
-                    item.statement_id.balance_end = item.balance_end_real
+        if self.balance_moment == 'starting':
+            self.statement_id.balance_start = self.balance_start_real
+        elif self.balance_moment == 'ending':
+            self.statement_id.balance_end_real = self.balance_end_real
+        # save the WizardUpdateCashboxLine in account_bank_statement
+        # load context
+        active_ids = self.env.context["active_id"] or []
+        bank_statement_obj = self.env["account.bank.statement"]
+        bank_statement = bank_statement_obj.browse(active_ids[0])
+        # create the account.bank.statement.cashbox linked with bank_statement
+        cashbox = self._create_cashbox(self.cashbox_lines, self.balance_moment)
+        bank_statement.write({'cashbox' : cashbox.id,})
         return True
-
-
-class WizardUpdateBankStatementLine(models.TransientModel):
-    _name = "wizard.update.bank.statement.line"
-    _description = 'POS Update Bank Statement Balance Line'
-
-    wiz_id = fields.Many2one(
-        comodel_name='wizard.update.bank.statement',
-        required=True,
-    )
-
-    statement_id = fields.Many2one(
-        comodel_name='account.bank.statement',
-    )
-    name = fields.Char(
-        related='statement_id.name'
-    )
-    journal_id = fields.Many2one(
-        comodel_name='account.journal',
-        related='statement_id.journal_id',
-    )
-    balance_start = fields.Monetary(
-        string="Starting Balance",
-        default=0.0,
-        compute='_compute_balance_start'
-    )
-    balance_start_real = fields.Monetary(
-        default=0.0
-    )
-    total_entry_encoding = fields.Monetary(
-        related='statement_id.total_entry_encoding',
-    )
-    balance_end = fields.Monetary(
-        string="Computed Balance",
-        default=0.0,
-        compute='_compute_balance_end'
-    )
-    balance_end_real = fields.Monetary(
-        default=0.0,
-    )
-    currency_id = fields.Many2one(
-        comodel_name='res.currency',
-        related='statement_id.currency_id'
-    )
-    balance_moment = fields.Selection(
-        related='wiz_id.balance_moment',
-        default='bydefault')
-
-    def _compute_balance_start(self):
-        for rec in self:
-            rec.balance_start = rec.statement_id.balance_start
-
-    def _compute_balance_end(self):
-        for rec in self:
-            rec.balance_end = rec.statement_id.balance_end
-
 
 class WizardUpdateCashboxLine(models.TransientModel):
     _name = 'wizard.update.cashbox.line'
@@ -259,10 +231,7 @@ class WizardUpdateCashboxLine(models.TransientModel):
     @api.one
     @api.depends('coin_value', 'number')
     def _sub_total(self):
-        """ Calculates Sub total"""
         self.subtotal = self.coin_value * self.number
-        # self.wiz_id.balance_end_real_up = self.subtotal // marche pas ça n'enregistre pas
-        # import pdb; pdb.set_trace()
 
     _BALANCE_MOMENT_SELECTION = [
         ('bydefault', 'Default'),
@@ -272,13 +241,16 @@ class WizardUpdateCashboxLine(models.TransientModel):
 
     balance_moment = fields.Selection(
         selection=_BALANCE_MOMENT_SELECTION, string='Balance moment',
-        default='bydefault')
+        related="wiz_id.balance_moment")
     coin_value = fields.Float(string='Coin/Bill Value', required=True, digits=0)
-    number = fields.Integer(string='Number of Coins/Bills', help='Opening Unit Numbers')
+    number = fields.Integer(string='Number of Coins/Bills', help='Opening Unit Numbers', default=1)
     subtotal = fields.Float(compute='_sub_total', string='Subtotal', digits=0, readonly=True)
     cashbox_id = fields.Many2one('wizard.update.cashbox', string="Cashbox")
     wiz_id = fields.Many2one('wizard.update.bank.statement', string="Wizard")
-
+    currency_id = fields.Many2one(
+        comodel_name='res.currency',
+        related='wiz_id.currency_id'
+    )
 
 class WizardUpdateCashbox(models.TransientModel):
     _name = 'wizard.update.cashbox'
@@ -289,9 +261,20 @@ class WizardUpdateCashbox(models.TransientModel):
     @api.multi
     @api.depends('cashbox_lines_ids.subtotal')
     def _total(self):
-        print("RECALCULE TOTAL = ")
         _total = 0.0
         for lines in self.cashbox_lines_ids:
             _total += lines.subtotal
         self.total = _total
-        print("RECALCULE TOTAL = " + str(_total))
+
+class AccountCashboxLine(models.Model):
+    _inherit = 'account.cashbox.line'
+
+    _BALANCE_MOMENT_SELECTION = [
+        ('bydefault', 'Default'),
+        ('starting', 'Starting balance'),
+        ('ending', 'Ending balance'),
+    ]
+
+    balance_moment = fields.Selection(
+        selection=_BALANCE_MOMENT_SELECTION, string='Balance moment',
+        default='bydefault')
