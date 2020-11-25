@@ -37,15 +37,14 @@ class AccountBankStatement(models.Model):
         string="Display autosolve", compute="_compute_display_autosolve"
     )
 
-    INUTILE_cashbox_lines = fields.Many2one(
-        comodel_name="account.cashbox.line",
-        inverse_name='accountbs_id',
-        string="Cashbox",
+    cashbox_starting = fields.Many2one(
+        comodel_name="account.bank.statement.cashbox",
+        string="Cashbox start",
     )
 
-    cashbox = fields.Many2one(
+    cashbox_ending = fields.Many2one(
         comodel_name="account.bank.statement.cashbox",
-        string="Cashbox",
+        string="Cashbox end",
     )
 
     # Compute Section
@@ -126,7 +125,7 @@ class AccountBankStatement(models.Model):
                         'journal_id': cb_journal_id,
                         'statement_id': statement.id,
                         'amount': abs(cb_difference),
-                        'name': _('Automatic solve (%s)') % cb_journal_name,
+                        'name': _('Automatic solve %s') % cb_journal_name,
                     })
                 wizard.apply()
 
@@ -149,10 +148,8 @@ class AccountBankStatement(models.Model):
         action = self.env.ref(
             "pos_multiple_control."
             "action_wizard_update_bank_statement").read()[0]
-        # import pdb; pdb.set_trace()
         action['context'] = {'balance_moment': balance_moment,
-                             'balance_end_real_up': 0,
                              'active_id': [self.id],
                              'active_pos_id': [self.pos_session_id.id],
-                             'active_model': 'pos.session',}
+                             'active_model': 'pos.session'}
         return action

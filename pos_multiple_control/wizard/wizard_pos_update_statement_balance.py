@@ -117,7 +117,6 @@ class WizardUpdateBankStatement(models.TransientModel):
         # Load objects
         session_obj = self.env["pos.session"]
         bank_statement_obj = self.env["account.bank.statement"]
-        cashbox_lines_obj = self.env["account.cashbox.line"]
         # Load context
         active_ids = self.env.context["active_id"] or []
         active_pos_id = self.env.context["active_pos_id"] or []
@@ -148,7 +147,7 @@ class WizardUpdateBankStatement(models.TransientModel):
         return res
 
     @api.model
-    def _prepare_cashbox_lines(self, line, moment):
+    def _prepare_cashbox_lines(self, line):
         return {
             "coin_value": line.coin_value,
             "number": line.number,
@@ -158,19 +157,36 @@ class WizardUpdateBankStatement(models.TransientModel):
 
     @api.model
     def _default_cashbox_lines(self):
+        print("=== recup les lines PAR DEFAUT")
         self._get_cashbox_lines('bydefault')
 
     @api.model
     def _get_cashbox_lines(self, moment):
-        # Load objects
+        # Load objects and context
         bank_statement_obj = self.env["account.bank.statement"]
-        # Load context
         active_ids = self.env.context["active_id"] or []
         bank_statement = bank_statement_obj.browse(active_ids[0])
         items = []
-        for line in bank_statement.cashbox.cashbox_lines_ids:
-            if line.balance_moment == moment:
-                items.append([0, 0, self._prepare_cashbox_lines(line, moment)])
+        print("=== recup les lines avec moment =" + str(moment))
+        if moment == 'starting':
+            if not bank_statement.cashbox_starting.cashbox_lines_ids and\
+                   bank_statement.journal_id.cashbox_default:
+                for line in bank_statement.journal_id.\
+                            cashbox_default.cashbox_lines_ids:
+                    items.append([0, 0, self._prepare_cashbox_lines(line)])
+            else:
+                for line in bank_statement.cashbox_starting.cashbox_lines_ids:
+                    items.append([0, 0, self._prepare_cashbox_lines(line)])
+        elif moment == 'ending':
+            if not bank_statement.cashbox_ending.cashbox_lines_ids and\
+                   bank_statement.journal_id.cashbox_default:
+                for line in bank_statement.journal_id.\
+                            cashbox_default.cashbox_lines_ids:
+                    items.append([0, 0, self._prepare_cashbox_lines(line)])
+            else:
+                for line in bank_statement.cashbox_ending.cashbox_lines_ids:
+                    items.append([0, 0, self._prepare_cashbox_lines(line)])
+        # import pdb; pdb.set_trace()
         return items
 
     cashbox_lines = fields.One2many(
@@ -186,16 +202,11 @@ class WizardUpdateBankStatement(models.TransientModel):
             "journal_id": item.journal_id.id,
         }
 
-    # cashbox_lines = {'coin_value': coin_value,
-    #                  'number': number,
-    #                  'subtotal': subtotal,
-    #                  'balance_moment': balance_moment}
-    def _create_cashbox(self, cashbox_lines, balance_moment):
-        # Load objects
+    def _create_cashbox(self, cashbox_lines):
+        # load object
         cashbox_obj = self.env["account.bank.statement.cashbox"]
         cashbox_line_obj = self.env["account.cashbox.line"]
-        bank_statement_obj = self.env["account.bank.statement"]
-        # Create the account.bank.statement.cashbox
+        # create new account.bank.statement.cashbox each time
         cashbox = cashbox_obj.create({})
         # Add the account.cashbox.line
         for line in self.cashbox_lines:
@@ -203,60 +214,67 @@ class WizardUpdateBankStatement(models.TransientModel):
                 'coin_value': line['coin_value'],
                 'number': line['number'],
                 'subtotal': line['subtotal'],
-                'balance_moment': balance_moment,
-                'cashbox_id': cashbox.id,})
+                'cashbox_id': cashbox.id})
         return cashbox
 
     @api.multi
     def action_confirm(self):
         self.ensure_one()
-        # record new values from wizard
-        if self.balance_moment == 'starting':
-            self.statement_id.balance_start = self.balance_start_real
-        elif self.balance_moment == 'ending':
-            self.statement_id.balance_end_real = self.balance_end_real
-        # save the WizardUpdateCashboxLine in account_bank_statement
         # load context
         active_ids = self.env.context["active_id"] or []
         bank_statement_obj = self.env["account.bank.statement"]
         bank_statement = bank_statement_obj.browse(active_ids[0])
-        # create the account.bank.statement.cashbox linked with bank_statement
-        cashbox = self._create_cashbox(self.cashbox_lines, self.balance_moment)
-        bank_statement.write({'cashbox' : cashbox.id,})
+        # create new cashbow with cashbox_lines
+        cashbox = self._create_cashbox(self.cashbox_lines)
+        if self.balance_moment == 'starting':
+            # record new values for wizard
+            self.statement_id.balance_start = self.balance_start_real
+            # record cashbox for account_bank_statement
+            bank_statement.write({'cashbox_starting': cashbox.id})
+        elif self.balance_moment == 'ending':
+            self.statement_id.balance_end_real = self.balance_end_real
+            bank_statement.write({'cashbox_ending': cashbox.id})
         return True
+
 
 class WizardUpdateCashboxLine(models.TransientModel):
     _name = 'wizard.update.cashbox.line'
+    _description = 'POS Update Bank Statement Balance Wizard Line'
 
     @api.one
     @api.depends('coin_value', 'number')
     def _sub_total(self):
         self.subtotal = self.coin_value * self.number
 
-    _BALANCE_MOMENT_SELECTION = [
-        ('bydefault', 'Default'),
-        ('starting', 'Starting balance'),
-        ('ending', 'Ending balance'),
-    ]
-
     balance_moment = fields.Selection(
-        selection=_BALANCE_MOMENT_SELECTION, string='Balance moment',
+        string='Balance moment',
         related="wiz_id.balance_moment")
-    coin_value = fields.Float(string='Coin/Bill Value', required=True, digits=0)
-    number = fields.Integer(string='Number of Coins/Bills', help='Opening Unit Numbers', default=1)
-    subtotal = fields.Float(compute='_sub_total', string='Subtotal', digits=0, readonly=True)
-    cashbox_id = fields.Many2one('wizard.update.cashbox', string="Cashbox")
-    wiz_id = fields.Many2one('wizard.update.bank.statement', string="Wizard")
+    coin_value = fields.Float(
+        string='Coin/Bill Value',
+        required=True, digits=0)
+    number = fields.Integer(
+        string='Number of Coins/Bills',
+        help='Opening Unit Numbers', default=1)
+    subtotal = fields.Float(
+        compute='_sub_total',
+        string='Subtotal', digits=0, readonly=True)
+    cashbox_id = fields.Many2one(
+        comodel_name='wizard.update.cashbox', string="Cashbox")
+    wiz_id = fields.Many2one(
+        comodel_name='wizard.update.bank.statement', string="Wizard")
     currency_id = fields.Many2one(
-        comodel_name='res.currency',
-        related='wiz_id.currency_id'
-    )
+        comodel_name='res.currency', related='wiz_id.currency_id')
+
 
 class WizardUpdateCashbox(models.TransientModel):
     _name = 'wizard.update.cashbox'
+    _description = 'POS Update Bank Statement Balance Wizard'
 
-    cashbox_lines_ids = fields.One2many('wizard.update.cashbox.line', 'cashbox_id', string='Cashbox Lines')
-    total = fields.Float(compute='_total', string='Total', digits=0, readonly=True)
+    cashbox_lines_ids = fields.One2many(
+        comodel_name='wizard.update.cashbox.line',
+        inverse_name='cashbox_id', string='Cashbox Lines')
+    total = fields.Float(
+        compute='_total', string='Total', digits=0, readonly=True)
 
     @api.multi
     @api.depends('cashbox_lines_ids.subtotal')
@@ -265,6 +283,7 @@ class WizardUpdateCashbox(models.TransientModel):
         for lines in self.cashbox_lines_ids:
             _total += lines.subtotal
         self.total = _total
+
 
 class AccountCashboxLine(models.Model):
     _inherit = 'account.cashbox.line'
@@ -278,3 +297,12 @@ class AccountCashboxLine(models.Model):
     balance_moment = fields.Selection(
         selection=_BALANCE_MOMENT_SELECTION, string='Balance moment',
         default='bydefault')
+
+
+class AccountBankStmtCashWizard(models.Model):
+    _inherit = 'account.bank.statement.cashbox'
+
+    name = fields.Char(string="Name")
+    is_pattern = fields.Boolean(
+        string="Is a selectable pattern", default=True,
+    )

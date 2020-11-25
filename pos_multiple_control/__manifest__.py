@@ -17,6 +17,7 @@
         "pos_cash_move_reason"
     ],
     "data": [
+        "views/view_account_bank_statement_cashbox.xml",
         "views/view_account_journal.xml",
         "views/view_pos_config.xml",
         "views/view_pos_session.xml",
@@ -25,6 +26,7 @@
     'demo': [
         'demo/res_groups.xml',
         'demo/account_account.xml',
+        'demo/account_bank_statement_cashbox.xml',
         'demo/account_journal.xml',
         'demo/pos_move_reason.xml',
         'demo/pos_config.xml',
