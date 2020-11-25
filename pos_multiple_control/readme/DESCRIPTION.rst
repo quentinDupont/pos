@@ -8,6 +8,8 @@ better control at the closing of the session.
 
 .. figure:: ../static/description/change_starting_balance.gif
 
+.. figure:: ../static/description/end_session_set_balance.gif
+
 * Quickly solve differences (we can set an absolute limit),
   thanks to pos_move_reason
 
